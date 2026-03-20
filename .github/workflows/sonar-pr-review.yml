@@ -1,0 +1,94 @@
+name: SonarCloud Scan + AI PR Review
+
+# Runs on every PR — scans the code into SonarCloud, then calls the
+# MCP server to post an AI-generated review with fix suggestions.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  sonar-and-review:
+    name: Sonar Scan & AI Review
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Full history is required for SonarCloud to compute new-code metrics
+          fetch-depth: 0
+
+      # ── 2. Java setup ──────────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ── 3. Maven cache ─────────────────────────────────────────────────────
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      # ── 4. SonarCloud scan ─────────────────────────────────────────────────
+      # Required repository secrets:  SONAR_TOKEN
+      # Required repository variables: SONAR_PROJECT_KEY, SONAR_ORG
+      #
+      # Set them at: Repository → Settings → Secrets and variables → Actions
+      #   Secret  : SONAR_TOKEN       = your SonarCloud user token
+      #   Variable: SONAR_PROJECT_KEY = springboot-sonar-snyk-demo
+      #   Variable: SONAR_ORG         = vivid-vortex-devops
+      - name: SonarCloud Scan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn -B verify sonar:sonar \
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }} \
+            -Dsonar.organization=${{ vars.SONAR_ORG }} \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.pullrequest.key=${{ github.event.pull_request.number }} \
+            -Dsonar.pullrequest.branch=${{ github.head_ref }} \
+            -Dsonar.pullrequest.base=${{ github.base_ref }}
+
+      # ── 5. Wait for SonarCloud to finish processing ────────────────────────
+      # SonarCloud processes results asynchronously after the scan completes.
+      # A short wait ensures issues are available before we call analyze-pr.
+      - name: Wait for SonarCloud to process results
+        run: sleep 15
+
+      # ── 6. Trigger AI PR Review ────────────────────────────────────────────
+      # Calls the SonarqubeGithubMcpDemo server which reads SonarCloud issues,
+      # matches them to changed files, and posts a review comment on this PR.
+      #
+      # Required repository variable: MCP_SERVER_URL
+      #   Set to your server's public URL, e.g.:
+      #   - Local dev with localtunnel: https://your-subdomain.loca.lt
+      #   - Local dev with ngrok:       https://abc123.ngrok-free.app
+      #   - Deployed server:            https://your-server.example.com
+      #
+      # If MCP_SERVER_URL is not set, this step is skipped (scan still runs).
+      - name: Trigger AI PR Review
+        if: ${{ vars.MCP_SERVER_URL != '' }}
+        run: |
+          echo "Calling analyze-pr on ${{ vars.MCP_SERVER_URL }}..."
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            "${{ vars.MCP_SERVER_URL }}/analyze-pr\
+?owner=${{ github.repository_owner }}\
+&repo=${{ github.event.repository.name }}\
+&prNumber=${{ github.event.pull_request.number }}\
+&sonarProjectKey=${{ vars.SONAR_PROJECT_KEY }}")
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS:")
+
+          echo "Response (HTTP $HTTP_STATUS):"
+          echo "$BODY"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::warning::analyze-pr returned HTTP $HTTP_STATUS — review may not have been posted"
+          fi
