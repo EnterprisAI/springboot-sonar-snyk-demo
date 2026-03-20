@@ -6,6 +6,19 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+  # Allows manual triggering from the Actions tab — useful for testing
+  # and for PRs opened before this workflow was added to the repo.
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to analyze'
+        required: true
+        default: '1'
+      sonar_project_key:
+        description: 'SonarCloud project key'
+        required: true
+        default: 'springboot-sonar-snyk-demo'
+
 jobs:
   sonar-and-review:
     name: Sonar Scan & AI Review
@@ -46,14 +59,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          BASE_REF: ${{ github.base_ref || 'master' }}
+          PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || inputs.sonar_project_key }}
         run: |
           mvn -B verify sonar:sonar \
-            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }} \
+            -Dsonar.projectKey=$PROJECT_KEY \
             -Dsonar.organization=${{ vars.SONAR_ORG }} \
             -Dsonar.host.url=https://sonarcloud.io \
-            -Dsonar.pullrequest.key=${{ github.event.pull_request.number }} \
-            -Dsonar.pullrequest.branch=${{ github.head_ref }} \
-            -Dsonar.pullrequest.base=${{ github.base_ref }}
+            -Dsonar.pullrequest.key=$PR_NUMBER \
+            -Dsonar.pullrequest.branch=$HEAD_REF \
+            -Dsonar.pullrequest.base=$BASE_REF
 
       # ── 5. Wait for SonarCloud to finish processing ────────────────────────
       # SonarCloud processes results asynchronously after the scan completes.
@@ -74,14 +92,14 @@ jobs:
       # If MCP_SERVER_URL is not set, this step is skipped (scan still runs).
       - name: Trigger AI PR Review
         if: ${{ vars.MCP_SERVER_URL != '' }}
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || inputs.sonar_project_key }}
         run: |
           echo "Calling analyze-pr on ${{ vars.MCP_SERVER_URL }}..."
+          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
           RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
-            "${{ vars.MCP_SERVER_URL }}/analyze-pr\
-?owner=${{ github.repository_owner }}\
-&repo=${{ github.event.repository.name }}\
-&prNumber=${{ github.event.pull_request.number }}\
-&sonarProjectKey=${{ vars.SONAR_PROJECT_KEY }}")
+            "${{ vars.MCP_SERVER_URL }}/analyze-pr?owner=${{ github.repository_owner }}&repo=$REPO_NAME&prNumber=$PR_NUMBER&sonarProjectKey=$PROJECT_KEY")
 
           HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
           BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS:")
