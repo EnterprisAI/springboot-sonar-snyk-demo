@@ -98,6 +98,8 @@ jobs:
           echo "Calling analyze-pr on ${{ vars.MCP_SERVER_URL }}..."
           REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
           RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            --max-time 300 --connect-timeout 10 \
+            -H "Bypass-Tunnel-Reminder: true" \
             "${{ vars.MCP_SERVER_URL }}/analyze-pr?owner=${{ github.repository_owner }}&repo=$REPO_NAME&prNumber=$PR_NUMBER&sonarProjectKey=$PROJECT_KEY")
 
           HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
