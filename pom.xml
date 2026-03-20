@@ -37,11 +37,22 @@
         </dependency>
     </dependencies>
 
+    <properties>
+        <sonar.projectKey>springboot-sonar-snyk-demo</sonar.projectKey>
+        <sonar.organization>vivid-vortex-devops</sonar.organization>
+        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
+    </properties>
+
     <build>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>4.0.0.4121</version>
             </plugin>
         </plugins>
     </build>
